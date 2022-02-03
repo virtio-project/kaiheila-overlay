@@ -1,0 +1,14 @@
+node_modules
+.DS_Store
+dist
+dist-ssr
+*.local
+/server/config.json
+/public/portraits/*.png
+!/public/portraits/default.png
+/package/
+/server_build/
+/.vscode/
+/.idea/
+/Building
+/kaiheila_streamkit.spec

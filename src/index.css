@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.nametag {
+    z-index: 10;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    border-radius: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+.portrait {
+    filter: brightness(0.3);
+}
+.portrait.speaking {
+    filter: brightness(1);
+    animation-name: speaking-anim;
+    animation-duration: 0.4s;
+    animation-fill-mode: forwards;
+}
+@keyframes speaking-anim {
+    0% {
+        bottom: 0px;
+    }
+    50% {
+        margin-top: -12px;
+    }
+    100% {
+        bottom: 0px;
+    }
+}
