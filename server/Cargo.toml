@@ -21,3 +21,6 @@ urlencoding = "2.1"
 
 [dev-dependencies]
 actix-rt = "2.7"
+
+[workspace]
+members = ["kaiheila"]

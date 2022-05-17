@@ -739,6 +739,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaiheila"
+version = "0.1.0"
+dependencies = [
+ "actix-codec",
+ "actix-http",
+ "awc",
+ "futures-util",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "urlencoding",
+]
+
+[[package]]
 name = "kaiheila_overlay"
 version = "0.1.0"
 dependencies = [
