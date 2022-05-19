@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use crate::WsMessage;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MessageError {
-    #[error("unsupported message")]
-    UnsupportedMessage,
+    #[error("transport error: {0}")]
+    TransportError(#[from] tokio_tungstenite::tungstenite::Error),
     #[error("deserialization failed: {0}")]
     JsonError(#[from] serde_json::Error),
     #[error("request resources not found")]
@@ -54,6 +55,21 @@ pub enum Event {
 pub struct SubscribeMessageBuilder {
     args: HashMap<String, serde_json::Value>,
     event: Option<Event>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AccessTokenResponse {
+    pub access_token: String,
+    pub expires_in: u32,
+    pub refresh_token: String,
+}
+
+impl TryFrom<WsMessage> for Message {
+    type Error = MessageError;
+
+    fn try_from(msg: WsMessage) -> Result<Self, Self::Error> {
+        Ok(serde_json::from_str(msg.to_text()?)?)
+    }
 }
 
 impl Message {

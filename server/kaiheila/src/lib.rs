@@ -3,7 +3,7 @@ mod message;
 #[macro_use]
 extern crate log;
 
-use crate::message::Message;
+use crate::message::{AccessTokenResponse, Message};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +12,9 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 const CLIENT_ID: &str = "15943749139034";
 const DEFAULT_ENDPOINT: &str = "ws://127.0.0.1:5988/?url=";
 const TOKEN_URL: &str = "https://www.kaiheila.cn/api/oauth2/token";
+
+type WsMessage = tokio_tungstenite::tungstenite::Message;
+type MessageHandler = oneshot::Sender<Result<Message, ClientError>>;
 
 #[derive(Debug)]
 pub struct ClientBuilder {
@@ -28,6 +31,10 @@ pub enum ClientBuildError {
     MissingField,
     #[error("ws client error: {0}")]
     WsClientError(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error("message error during initialization: {0}")]
+    InitializationError(#[from] message::MessageError),
+    #[error("error during request access_token: {0}")]
+    GetTokenError(#[from] reqwest::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -43,7 +50,7 @@ pub enum ClientError {
 }
 
 pub struct Client {
-    tx: mpsc::UnboundedSender<(Message, oneshot::Sender<Result<Message, ClientError>>)>,
+    tx: mpsc::UnboundedSender<(Message, MessageHandler)>,
 }
 
 impl Default for ClientBuilder {
@@ -88,10 +95,35 @@ impl ClientBuilder {
         );
         let url = format!("{}{}", self.endpoint, urlencoding::encode(url.as_str()));
 
-        let (tx, mut rx) =
-            mpsc::unbounded_channel::<(Message, oneshot::Sender<Result<Message, ClientError>>)>();
+        let (tx, mut rx) = mpsc::unbounded_channel::<(Message, MessageHandler)>();
 
-        let (ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
+        let (mut ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
+        // get authorization before all of these
+        {
+            let authorize_req = serde_json::to_string(&Message::authorize_req(&self.client_id)).unwrap(); // should never fail
+            ws_stream.send(WsMessage::Text(authorize_req)).await?;
+            let response = Message::try_from(ws_stream.next().await.unwrap()?)?;
+            let authorize_code = response.get_data_string("code")?;
+
+            let http_client = reqwest::Client::default();
+            let access_token = http_client
+                .post(TOKEN_URL)
+                .json(&serde_json::json!({
+                    "code": authorize_code,
+                    "grant_type": "authorization_code",
+                    "client_id": CLIENT_ID
+                }))
+                .send()
+                .await?
+                .json::<AccessTokenResponse>()
+                .await?
+                .access_token;
+
+            let authenticate_req = serde_json::to_string(&Message::authenticate_req(&self.client_id, access_token)).unwrap(); // should never fail
+            ws_stream.send(WsMessage::Text(authenticate_req)).await?;
+            let _ = ws_stream.next().await.unwrap()?; // swallow the response
+        }
+
         let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
         let handlers = Arc::new(Mutex::new(HashMap::new()));
