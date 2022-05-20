@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use crate::WsMessage;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use crate::WsMessage;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MessageError {
@@ -16,22 +16,24 @@ pub enum MessageError {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
-    pub(crate) id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     args: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<HashMap<String, serde_json::Value>>,
-    cmd: Cmd,
+    pub(crate) cmd: Cmd,
     #[serde(rename = "evt", skip_serializing_if = "Option::is_none")]
-    event: Option<Event>,
+    pub(crate) event: Option<Event>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Cmd {
     Authenticate,
     Authorize,
     CreateChannelInvite,
+    Dispatch,
     GetChannel,
     GetChannelList,
     GetGuildList,
@@ -39,7 +41,7 @@ pub enum Cmd {
     Subscribe,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
     AudioChannelUserChange,
@@ -97,7 +99,7 @@ impl Message {
     pub fn authorize_req<C: AsRef<str>>(client_id: C) -> Self {
         let mut rng = rand::thread_rng();
         Message {
-            id: rng.gen_range(1000000..9999999),
+            id: Some(rng.gen_range(1000000..9999999)),
             args: Some(HashMap::from_iter([
                 (
                     "client_id".to_string(),
@@ -124,7 +126,7 @@ impl Message {
     pub fn authenticate_req<C: AsRef<str>>(client_id: C, token: String) -> Self {
         let mut rng = rand::thread_rng();
         Message {
-            id: rng.gen_range(1000000..9999999),
+            id: Some(rng.gen_range(1000000..9999999)),
             args: Some(HashMap::from_iter([
                 (
                     "client_id".to_string(),
@@ -172,7 +174,7 @@ impl SubscribeMessageBuilder {
         let mut rng = rand::thread_rng();
         let Self { args, event } = self;
         Message {
-            id: rng.gen_range(1000000..9999999),
+            id: Some(rng.gen_range(1000000..9999999)),
             args: Some(args),
             data: None,
             cmd: Cmd::Subscribe,
