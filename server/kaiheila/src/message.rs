@@ -5,6 +5,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// Message related errors
 #[derive(Debug, thiserror::Error)]
 pub enum MessageError {
     #[error("transport error: {0}")]
@@ -15,6 +16,7 @@ pub enum MessageError {
     NotFound,
 }
 
+/// description of a possible kaiheila message
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -28,6 +30,7 @@ pub struct Message {
     pub(crate) event: Option<Event>,
 }
 
+/// command of a kaiheila [`Message`]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Cmd {
@@ -42,6 +45,7 @@ pub enum Cmd {
     Subscribe,
 }
 
+/// event of a kaiheila [`Message`]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
@@ -55,12 +59,14 @@ pub enum Event {
     MessageDelete,
 }
 
+/// builder of a subscription command
 #[derive(Default, Clone, Debug)]
 pub struct SubscribeMessageBuilder {
     args: HashMap<String, serde_json::Value>,
     event: Option<Event>,
 }
 
+/// description of a kaiheila access token response
 #[derive(Clone, Debug, Deserialize)]
 pub struct AccessTokenResponse {
     pub access_token: String,
@@ -78,6 +84,7 @@ impl TryFrom<WsMessage> for Message {
 }
 
 impl Message {
+    /// helper method to get a value by key from args
     pub fn get_args_string<K: AsRef<str>>(&self, k: K) -> Result<String, MessageError> {
         match self.args {
             None => Err(MessageError::NotFound),
@@ -88,6 +95,11 @@ impl Message {
         }
     }
 
+    /// helper method to get a value by key from data
+    ///
+    /// ### note
+    ///
+    /// if the `data` is not a [`serde_json::Map`], you will get an error
     pub fn get_data_string<K: AsRef<str>>(&self, k: K) -> Result<String, MessageError> {
         match self.data.as_ref().and_then(|d| d.as_object()) {
             None => Err(MessageError::NotFound),
@@ -98,10 +110,12 @@ impl Message {
         }
     }
 
+    /// treat the data as an array (if possible)
     pub fn get_data_array(&self) -> Option<&Vec<Value>> {
         self.data.as_ref().and_then(|d| d.as_array())
     }
 
+    /// creates an authorize_req
     pub fn authorize_req<C: AsRef<str>>(client_id: C) -> Self {
         let mut rng = rand::thread_rng();
         Message {
@@ -129,6 +143,7 @@ impl Message {
         }
     }
 
+    /// creates an authenticate_req
     pub fn authenticate_req<C: AsRef<str>>(client_id: C, token: String) -> Self {
         let mut rng = rand::thread_rng();
         Message {
