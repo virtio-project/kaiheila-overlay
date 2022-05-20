@@ -1,4 +1,4 @@
-mod message;
+pub mod message;
 
 #[macro_use]
 extern crate log;
@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 const CLIENT_ID: &str = "15943749139034";
 const DEFAULT_ENDPOINT: &str = "ws://127.0.0.1:5988/?url=";
@@ -71,24 +72,24 @@ impl Default for ClientBuilder {
 }
 
 impl ClientBuilder {
-    pub fn set_client_id(mut self, client_id: String) -> Self {
-        self.client_id = client_id;
+    pub fn set_client_id<S: AsRef<str>>(mut self, client_id: S) -> Self {
+        self.client_id = client_id.as_ref().to_owned();
         self
     }
-    pub fn set_endpoint(mut self, endpoint: String) -> Self {
-        self.endpoint = endpoint;
+    pub fn set_endpoint<S: AsRef<str>>(mut self, endpoint: S) -> Self {
+        self.endpoint = endpoint.as_ref().to_owned();
         self
     }
-    pub fn set_token_url(mut self, token_url: String) -> Self {
-        self.token_url = token_url;
+    pub fn set_token_url<S: AsRef<str>>(mut self, token_url: S) -> Self {
+        self.token_url = token_url.as_ref().to_owned();
         self
     }
-    pub fn set_guild_id(mut self, guild_id: Option<String>) -> Self {
-        self.guild_id = guild_id;
+    pub fn set_guild_id<S: AsRef<str>>(mut self, guild_id: S) -> Self {
+        self.guild_id = Some(guild_id.as_ref().to_owned());
         self
     }
-    pub fn set_channel_id(mut self, channel_id: Option<String>) -> Self {
-        self.channel_id = channel_id;
+    pub fn set_channel_id<S: AsRef<str>>(mut self, channel_id: S) -> Self {
+        self.channel_id = Some(channel_id.as_ref().to_owned());
         self
     }
 
@@ -103,17 +104,26 @@ impl ClientBuilder {
                 .ok_or(ClientBuildError::MissingField)?
         );
         let url = format!("{}{}", self.endpoint, urlencoding::encode(url.as_str()));
+        debug!("source url: {}", url);
 
         let (tx, mut rx) = mpsc::unbounded_channel::<(Message, MessageHandler)>();
 
-        let (mut ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
+        let mut req = url.into_client_request()?;
+        req.headers_mut()
+            .insert("Origin", "https://streamkit.kaiheila.cn".parse().unwrap());
+
+        let (mut ws_stream, _) = tokio_tungstenite::connect_async(req).await?;
         // get authorization before all of these
         {
+            // ignore first ready message
+            let _ = ws_stream.next().await.unwrap()?;
+
             let authorize_req =
                 serde_json::to_string(&Message::authorize_req(&self.client_id)).unwrap(); // should never fail
             ws_stream.send(WsMessage::Text(authorize_req)).await?;
             let response = Message::try_from(ws_stream.next().await.unwrap()?)?;
             let authorize_code = response.get_data_string("code")?;
+            debug!("authorize code: {:?}", authorize_code);
 
             let http_client = reqwest::Client::default();
             let access_token = http_client
@@ -128,6 +138,7 @@ impl ClientBuilder {
                 .json::<AccessTokenResponse>()
                 .await?
                 .access_token;
+            debug!("access token: {:?}", access_token);
 
             let authenticate_req =
                 serde_json::to_string(&Message::authenticate_req(&self.client_id, access_token))
@@ -155,7 +166,9 @@ impl ClientBuilder {
                 let packed = tokio_tungstenite::tungstenite::Message::Text(
                     serde_json::to_string(&msg).unwrap(),
                 );
+                debug!("sending {:?}", packed);
                 if let Err(e) = ws_tx.send(packed).await {
+                    debug!("sending task got err: {:?}", e);
                     let mut guard = _handlers.lock().await;
                     let handler = guard.remove(&msg.id.unwrap()).unwrap();
                     handler.send(Err(e.into())).ok();
@@ -167,6 +180,7 @@ impl ClientBuilder {
         // receiving message and passing it to handler
         tokio::spawn(async move {
             while let Some(ret) = ws_rx.next().await {
+                debug!("receiving: {:?}", ret);
                 let _handlers = handlers.clone();
                 let _broadcast_handlers = _broadcast_handlers.clone();
                 tokio::spawn(async move {
@@ -221,10 +235,12 @@ impl ClientBuilder {
 
 impl Client {
     pub fn new_builder() -> ClientBuilder {
+        debug!("initialize default builder");
         ClientBuilder::default()
     }
 
     pub async fn send_message(&self, message: Message) -> Result<Message, ClientError> {
+        debug!("ready to send {:?}", message);
         let (tx, rx) = oneshot::channel();
         self.tx
             .send((message, tx))
@@ -233,6 +249,19 @@ impl Client {
     }
 
     pub async fn subscribe(&self, event: Event) -> Result<UnboundedReceiver<Message>, ClientError> {
+        debug!("try to subscribe event {:?}", event);
+
+        let ret = self
+            .send_message(
+                Message::subscribe_builder()
+                    .event(event)
+                    .guild_id(&self.guild_id)
+                    .channel_id(&self.channel_id)
+                    .build(),
+            )
+            .await?; // ignore response
+        debug!("subscribe result: {:?}", ret);
+
         let (tx, rx) = mpsc::unbounded_channel();
         {
             let mut guard = self.subscriptions.lock().await;
@@ -240,19 +269,10 @@ impl Client {
             if !guard.contains_key(&event) {
                 let entry = guard.entry(event).or_insert_with(Vec::new);
                 entry.push(tx);
-                return Ok(rx);
+            } else {
+                guard.get_mut(&event).unwrap().push(tx);
             }
-            guard.get_mut(&event).unwrap().push(tx);
         }
-
-        self.send_message(
-            Message::subscribe_builder()
-                .event(event)
-                .guild_id(&self.guild_id)
-                .channel_id(&self.channel_id)
-                .build(),
-        )
-        .await?; // ignore response
 
         Ok(rx)
     }

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::WsMessage;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MessageError {
@@ -21,7 +22,7 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     args: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<HashMap<String, serde_json::Value>>,
+    data: Option<serde_json::Value>,
     pub(crate) cmd: Cmd,
     #[serde(rename = "evt", skip_serializing_if = "Option::is_none")]
     pub(crate) event: Option<Event>,
@@ -44,6 +45,7 @@ pub enum Cmd {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
+    Ready,
     AudioChannelUserChange,
     AudioChannelUserTalk,
     AudioChannelMicHeadersetStatus,
@@ -62,8 +64,9 @@ pub struct SubscribeMessageBuilder {
 #[derive(Clone, Debug, Deserialize)]
 pub struct AccessTokenResponse {
     pub access_token: String,
-    pub expires_in: u32,
-    pub refresh_token: String,
+    pub expire_in: u32,
+    pub token_type: String,
+    pub scope: String,
 }
 
 impl TryFrom<WsMessage> for Message {
@@ -76,24 +79,27 @@ impl TryFrom<WsMessage> for Message {
 
 impl Message {
     pub fn get_args_string<K: AsRef<str>>(&self, k: K) -> Result<String, MessageError> {
-        Message::get_string_inner(&self.args, k)
+        match self.args {
+            None => Err(MessageError::NotFound),
+            Some(ref m) => m
+                .get(k.as_ref())
+                .ok_or(MessageError::NotFound)
+                .and_then(|v| v.as_str().ok_or(MessageError::NotFound).map(str::to_string)),
+        }
     }
 
     pub fn get_data_string<K: AsRef<str>>(&self, k: K) -> Result<String, MessageError> {
-        Message::get_string_inner(&self.data, k)
-    }
-
-    fn get_string_inner<K: AsRef<str>>(
-        map: &Option<HashMap<String, serde_json::Value>>,
-        k: K,
-    ) -> Result<String, MessageError> {
-        match map {
+        match self.data.as_ref().and_then(|d| d.as_object()) {
             None => Err(MessageError::NotFound),
             Some(m) => m
                 .get(k.as_ref())
                 .ok_or(MessageError::NotFound)
                 .and_then(|v| v.as_str().ok_or(MessageError::NotFound).map(str::to_string)),
         }
+    }
+
+    pub fn get_data_array(&self) -> Option<&Vec<Value>> {
+        self.data.as_ref().and_then(|d| d.as_array())
     }
 
     pub fn authorize_req<C: AsRef<str>>(client_id: C) -> Self {
